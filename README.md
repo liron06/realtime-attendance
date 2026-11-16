@@ -221,6 +221,25 @@ sudo journalctl -u caddy --since '30 minutes ago' --no-pager
 
 Voorkom dat secrets of ruwe QR-/OAuth-waarden in supporttickets worden gekopieerd. Deel ook nooit de uitvoer van `docker compose config` of `docker inspect` ongecensureerd.
 
+OAuth-callbackfouten verschijnen als één gestructureerde regel met prefix `[oauth-callback]`, bijvoorbeeld met uitsluitend `requestId`, `code`, `step` en eventueel `httpStatus`. Filter ze zo:
+
+```bash
+sudo docker compose logs app | grep '\[oauth-callback\]'
+sudo docker compose logs --since=30m app | grep 'OAUTH_'
+```
+
+Belangrijkste codes:
+
+- `OAUTH_TOKEN_REQUEST_FAILED`, `OAUTH_TOKEN_HTTP_ERROR`, `OAUTH_TOKEN_SCHEMA_INVALID`: tokenexchange/netwerk, clientconfiguratie of onverwacht tokencontract.
+- `OAUTH_USERINFO_REQUEST_FAILED`, `OAUTH_USERINFO_HTTP_ERROR`, `OAUTH_USERINFO_SCHEMA_INVALID`: userinfo-netwerk, HTTP-status of contract.
+- `OAUTH_MEMBER_INACTIVE`, `OAUTH_MEMBER_USERNAME_MISSING`: inactief lid of geen bruikbare username in userinfo.
+- `OAUTH_MEMBERS_API_REQUEST_FAILED`, `OAUTH_MEMBERS_API_HTTP_ERROR`, `OAUTH_MEMBERS_API_SCHEMA_INVALID`: leden-API niet bereikbaar, geweigerd of afwijkend paginatiecontract.
+- `OAUTH_MEMBER_NOT_FOUND`, `OAUTH_MEMBER_AMBIGUOUS`: username levert nul of meerdere exacte ledenmatches op.
+- `OAUTH_DATABASE_UPSERT_FAILED`, `OAUTH_SESSION_CREATION_FAILED`: lokale database- of sessiestap mislukt.
+- `OAUTH_STATE_INVALID`, `OAUTH_PROVIDER_DENIED`, `OAUTH_CODE_MISSING`, `OAUTH_CONFIG_INVALID`, `OAUTH_UNEXPECTED`: callbackbeveiliging, weigering, ontbrekende code, configuratie of onverwachte fout.
+
+De logger schrijft bewust geen OAuth-code, access token, API-key, secret, username, naam of ruwe Congressus-response.
+
 ### 7. Back-up en herstel
 
 Maak buiten de Docker-volume-opslag regelmatig versleutelde off-hostback-ups. Een consistente PostgreSQL custom-formatback-up:
