@@ -32,7 +32,7 @@ export const congressusDateTimeSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{
 
 export const eventSchema = z.object({
   id: z.number().int().nonnegative(), name: z.string(), start: congressusDateTimeSchema, end: congressusDateTimeSchema,
-  location: z.string().nullable().optional(), participation_mode: z.enum(["none", "single", "ticketing"]).default("single"),
+  location: z.string().nullable().optional(), participation_mode: z.enum(["none", "single", "ticketing"]).nullable(),
   num_tickets_sold: z.number().int().nonnegative().nullable().optional()
 }).passthrough();
 

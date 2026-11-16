@@ -15,6 +15,7 @@ export async function checkIn(input: Input) {
   if (!member?.active) throw new CheckInError("INACTIVE", "Dit lid heeft geen actief lidmaatschap.");
   if (!event) throw new CheckInError("EVENT_NOT_FOUND", "Deze activiteit bestaat niet.", 404);
   if (event.closedAt) throw new CheckInError("EVENT_CLOSED", "Deze activiteit is afgesloten.", 409);
+  if (!["single", "ticketing", "none"].includes(event.participationMode)) throw new CheckInError("UNKNOWN_PARTICIPATION_MODE", "De deelnamevorm van deze activiteit is onbekend. Synchroniseer opnieuw of controleer de activiteit in Congressus voordat je incheckt.", 409);
   const participation = member.congressusMemberId ? await db.eventParticipation.findFirst({ where: { eventId: event.id, congressusMemberId: member.congressusMemberId } }) : null;
   if (!participation && !input.allowException) throw new CheckInError("NOT_REGISTERED", "Dit lid is niet aangemeld voor deze activiteit.", 409);
   if (!participation && (!input.reason || input.reason.trim().length < 3)) throw new CheckInError("REASON_REQUIRED", "Een reden is verplicht voor deze uitzondering.");

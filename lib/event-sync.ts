@@ -26,6 +26,14 @@ export function normalizeCongressusDate(value: string) {
   return new Date(/Z|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`);
 }
 
+export function internalParticipationMode(mode: CongressusEvent["participation_mode"]) {
+  return mode ?? "unknown";
+}
+
+export function supportsParticipationSync(mode: CongressusEvent["participation_mode"]) {
+  return mode === "single" || mode === "ticketing";
+}
+
 type SyncDependencies = {
   listEvents: typeof listEvents;
   listParticipations: typeof listParticipations;
@@ -33,17 +41,18 @@ type SyncDependencies = {
 };
 
 async function persistEvent(event: CongressusEvent, participations: Participation[]) {
+  const participationMode = internalParticipationMode(event.participation_mode);
   return db.$transaction(async tx => {
     const cached = await tx.eventCache.upsert({
       where: { congressusEventId: event.id },
       create: {
         congressusEventId: event.id, name: event.name, startsAt: normalizeCongressusDate(event.start), endsAt: normalizeCongressusDate(event.end),
-        location: event.location, participationMode: event.participation_mode, registrationCount: event.num_tickets_sold ?? 0,
+        location: event.location, participationMode, registrationCount: event.num_tickets_sold ?? 0,
         payload: event as Prisma.InputJsonValue
       },
       update: {
         name: event.name, startsAt: normalizeCongressusDate(event.start), endsAt: normalizeCongressusDate(event.end), location: event.location,
-        participationMode: event.participation_mode, registrationCount: event.num_tickets_sold ?? 0, payload: event as Prisma.InputJsonValue, syncedAt: new Date()
+        participationMode, registrationCount: event.num_tickets_sold ?? 0, payload: event as Prisma.InputJsonValue, syncedAt: new Date()
       }
     });
     for (const participation of participations) {
@@ -91,7 +100,7 @@ export async function syncEvents(requestId: string, dependencies: SyncDependenci
     const eventStartedAt = Date.now();
     let phase: SyncPhase = "participations_fetch";
     try {
-      const participations = event.participation_mode === "none" ? [] : await dependencies.listParticipations(event.id);
+      const participations = supportsParticipationSync(event.participation_mode) ? await dependencies.listParticipations(event.id) : [];
       phase = "database";
       participationsProcessed += await dependencies.persistEvent(event, participations);
       eventsProcessed++;

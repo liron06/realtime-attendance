@@ -5,6 +5,8 @@ it("accepteert officiële paginatiemetadata en nullable first_name",()=>{const r
 
 it("accepteert Congressus UTC-datums zonder offset",()=>{const event=eventSchema.parse({id:1,name:"Borrel",start:"2026-11-16T18:00:00",end:"2026-11-16T20:00:00",participation_mode:"single"});expect(event.start).toBe("2026-11-16T18:00:00")});
 
+it.each(["single","ticketing","none",null] as const)("behoudt participation_mode %s zonder omzetting",participationMode=>{const event=eventSchema.parse({id:1,name:"Activiteit",start:"2026-11-16T18:00:00",end:"2026-11-16T20:00:00",participation_mode:participationMode});expect(event.participation_mode).toBe(participationMode)});
+
 it("maakt niet-verplichte deelnamevelden niet kunstmatig verplicht",()=>{const participation=participationSchema.parse({id:9,event_id:3,member_id:null,addressee:"Gast",status:"approved",tickets:[{ticket_type_id:2,name:null}]});expect(participation.num_tickets_sold).toBeUndefined();expect(participation.member).toBeUndefined();expect(participation.tickets[0].status_presence).toBeUndefined()});
 
 it("vereist de gedocumenteerde paginatiemetadata",()=>{expect(()=>pageSchema(eventSchema).parse({data:[],total:0})).toThrow()});
