@@ -36,8 +36,8 @@ export function SyncButton() {
     }
   }
 
-  return <div className="max-w-xl">
-    <button disabled={busy} className="button" onClick={synchronize}><RefreshCw className={busy ? "animate-spin" : ""} size={18}/>{busy ? "Synchroniseren…" : "Synchroniseer Congressus"}</button>
-    {notice && <p role="status" aria-live="polite" className={`mt-2 text-sm font-semibold ${notice.kind === "error" ? "text-red-700" : "text-emerald-700"}`}>{notice.text}</p>}
+  return <div className="w-full max-w-xl sm:w-auto">
+    <button disabled={busy} className="button w-full sm:w-auto" onClick={synchronize}><RefreshCw className={busy ? "animate-spin" : ""} size={18}/>{busy ? "Synchroniseren…" : "Synchroniseer Congressus"}</button>
+    {notice && <p role="status" aria-live="polite" className={`mt-2 max-w-md text-sm font-semibold ${notice.kind === "error" ? "text-red-700" : "text-emerald-700"}`}>{notice.text}</p>}
   </div>;
 }
