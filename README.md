@@ -16,12 +16,23 @@ De gebruikte API-contracten zijn gecontroleerd tegen `https://api.congressus.nl/
 
 ## Lokaal starten (demo)
 
+De productie-Compose-configuratie forceert bewust `DEMO_MODE=false`. Gebruik voor lokale demo-ontwikkeling een losse, alleen op loopback gepubliceerde PostgreSQL-container en de Node.js-processen op de host:
+
 ```bash
 cp .env.example .env
-# vervang SESSION_SECRET en QR_SECRET door twee verschillende willekeurige waarden
-docker compose up -d db
+# vul lokale secrets in en voeg toe/wijzig:
+# DATABASE_URL="postgresql://realtime_demo:demo_only@127.0.0.1:5432/realtime_demo?schema=public"
+# APP_URL="http://localhost:3000"
+# CONGRESSUS_REDIRECT_URI="http://localhost:3000/api/auth/callback"
+# DEMO_MODE="true"
+docker run --name realtime-attendance-demo-db -d \
+  -e POSTGRES_DB=realtime_demo \
+  -e POSTGRES_USER=realtime_demo \
+  -e POSTGRES_PASSWORD=demo_only \
+  -p 127.0.0.1:5432:5432 \
+  postgres:17-alpine
 npx prisma migrate deploy
-DEMO_MODE=true npm run db:seed
+npm run db:seed
 npm run dev
 ```
 
@@ -33,16 +44,205 @@ Maak een nieuwe OAuth-app aan met callback `CONGRESSUS_REDIRECT_URI`; hergebruik
 
 De API-key heeft alleen leesrechten voor leden/events/deelnames en schrijfrecht voor aanwezigheid nodig. De officiële limieten zijn 60 verzoeken/minuut en 1.000/uur; synchronisatie leest pagina's van 100 en check-ins gaan via de outbox.
 
-## Productie achter Caddy
+## Deployment op management-VPS `breeze`
+
+De productie-URL is `https://attendance.sv-realtime-gaming.nl`. Docker publiceert de app uitsluitend als `127.0.0.1:3005`; Caddy handelt publiek verkeer en HTTPS af. PostgreSQL publiceert geen hostpoort.
+
+### 1. Voorbereiding en installatie
+
+Zorg eerst dat het DNS A/AAAA-record van `attendance.sv-realtime-gaming.nl` naar `breeze` wijst. Onderstaande installatiecommando's zijn voor Debian/Ubuntu. Sla deze stap over als Docker Engine met de Compose-plugin al aanwezig is.
+
+```bash
+ssh beheerder@breeze
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo docker version
+sudo docker compose version
+```
+
+Gebruik op een niet-Ubuntu Debian-host de officiële Docker-repository voor die distributie. Voeg beheerders niet onnodig aan de `docker`-groep toe: toegang tot Docker is praktisch roottoegang. De voorbeelden gebruiken daarom `sudo docker`.
+
+Maak een vaste applicatiemap en clone de repository:
+
+```bash
+sudo install -d -m 0750 -o root -g root /opt/realtime-attendance
+sudo git clone <REPOSITORY-URL> /opt/realtime-attendance
+cd /opt/realtime-attendance
+```
+
+### 2. Productie-`.env` veilig configureren
+
+Maak het bestand root-only. `.dockerignore` en `.gitignore` sluiten `.env` uit van images en Git.
+
+```bash
+cd /opt/realtime-attendance
+sudo install -m 0600 -o root -g root .env.example .env
+openssl rand -hex 32   # POSTGRES_PASSWORD; URL-veilig
+openssl rand -hex 64   # SESSION_SECRET
+openssl rand -hex 64   # QR_SECRET; gebruik een andere waarde
+sudoedit .env
+sudo stat -c '%a %U:%G %n' .env
+```
+
+Vul minimaal alle `CHANGE_ME`-waarden in. Vereiste productie-instellingen:
+
+```dotenv
+POSTGRES_DB="realtime_attendance"
+POSTGRES_USER="realtime_attendance"
+POSTGRES_PASSWORD="<uit-openssl-rand-hex-32>"
+APP_URL="https://attendance.sv-realtime-gaming.nl"
+SESSION_SECRET="<eerste-unieke-openssl-rand-hex-64>"
+QR_SECRET="<tweede-unieke-openssl-rand-hex-64>"
+CONGRESSUS_API_BASE_URL="https://api.congressus.nl/v30"
+CONGRESSUS_API_KEY="<api-key>"
+CONGRESSUS_BASE_URL="https://www.sv-realtime.nl"
+CONGRESSUS_CLIENT_ID="<oauth-client-id>"
+CONGRESSUS_CLIENT_SECRET="<oauth-client-secret>"
+CONGRESSUS_REDIRECT_URI="https://attendance.sv-realtime-gaming.nl/api/auth/callback"
+CONGRESSUS_BOARD_GROUP_SLUG="<echte-geconfigureerde-slug>"
+CONGRESSUS_BOARD_USER_IDS=""
+DEMO_MODE="false"
+```
+
+Registreer exact de bovenstaande callback-URL in Congressus. Zet geen quotes, spaties, `%`, `@`, `:` of `/` in het databasewachtwoord tenzij het eerst correct URL-gecodeerd wordt; de aanbevolen hexwaarde voorkomt dit probleem. Compose forceert zelf `DEMO_MODE=false`, ook als iemand de `.env`-waarde per ongeluk wijzigt.
+
+Controleer de configuratie zonder hem te publiceren of de uitvoer te delen; `docker compose config` bevat opgeloste secrets:
+
+```bash
+cd /opt/realtime-attendance
+sudo docker compose config --quiet
+sudo docker compose config --services
+```
+
+Verwachte services: `db`, `migrate`, `app`, `worker`.
+
+### 3. Eerste start en migraties
+
+Build eerst alle doelimages. Start vervolgens de volledige stack. `db` moet gezond zijn, `migrate` moet succesvol met exitcode 0 eindigen en pas daarna starten app en worker.
+
+```bash
+cd /opt/realtime-attendance
+sudo docker compose build --pull
+sudo docker compose up -d
+sudo docker compose ps -a
+sudo docker compose logs --no-log-prefix migrate
+curl --fail --silent --show-error http://127.0.0.1:3005/api/health
+```
+
+De migratiecontainer hoort na `prisma migrate deploy` als `Exited (0)` zichtbaar te zijn. Controleer bij twijfel expliciet:
+
+```bash
+sudo docker compose run --rm migrate
+sudo docker compose exec db sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+sudo docker compose logs --tail=100 app worker
+```
+
+Controleer dat alleen de loopbackbinding bestaat en PostgreSQL niet gepubliceerd is:
+
+```bash
+sudo docker compose port app 3000
+sudo docker compose port db 5432
+sudo ss -ltnp | grep ':3005'
+```
+
+De eerste opdracht moet `127.0.0.1:3005` tonen; de database-opdracht hoort geen gepubliceerde poort terug te geven.
+
+### 4. Caddy toevoegen zonder andere diensten te wijzigen
+
+Maak eerst een back-up en voeg uitsluitend dit nieuwe, zelfstandige siteblok aan de bestaande Caddyfile toe. Vervang of herschrijf geen bestaande blokken.
+
+```bash
+sudo cp -a /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.backup.$(date +%Y%m%d-%H%M%S)"
+sudoedit /etc/caddy/Caddyfile
+```
+
+Toe te voegen blok:
 
 ```caddy
-attendance.sv-realtime.nl {
+attendance.sv-realtime-gaming.nl {
   encode zstd gzip
-  reverse_proxy 127.0.0.1:3000
+  reverse_proxy 127.0.0.1:3005
 }
 ```
 
-Zet `APP_URL` en `CONGRESSUS_REDIRECT_URI` op de HTTPS-URL, `DEMO_MODE=false`, gebruik sterke secrets en start `app`, `db`, `migrate` en `worker` via Compose. De app-container draait als niet-rootgebruiker en heeft een `/api/health`-healthcheck.
+Valideer de volledige bestaande configuratie vóór een reload. `reload` behoudt actieve andere diensten; gebruik geen restart als dat niet nodig is.
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+sudo systemctl status caddy --no-pager
+curl --fail --silent --show-error https://attendance.sv-realtime-gaming.nl/api/health
+```
+
+Bij een validatiefout: pas de Caddyfile aan of zet de gedateerde back-up terug; reload nooit een ongeldige configuratie.
+
+### 5. Updates uitvoeren
+
+Maak vóór een update een databaseback-up. Bouw daarna nieuwe images, voer migraties uit en vervang alleen app en worker. Gebruik `--ff-only` om onverwachte mergecommits op de VPS te voorkomen.
+
+```bash
+cd /opt/realtime-attendance
+sudo install -d -m 0700 /var/backups/realtime-attendance
+sudo docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' | sudo tee "/var/backups/realtime-attendance/pre-update-$(date +%Y%m%d-%H%M%S).dump" >/dev/null
+sudo git pull --ff-only
+sudo docker compose config --quiet
+sudo docker compose build --pull
+sudo docker compose up -d db
+sudo docker compose run --rm migrate
+sudo docker compose up -d --no-deps app worker
+sudo docker compose ps -a
+curl --fail --silent --show-error http://127.0.0.1:3005/api/health
+```
+
+Ruim oude, ongebruikte images pas na een geslaagde controle op:
+
+```bash
+sudo docker image prune
+```
+
+### 6. Logs en diagnose
+
+```bash
+cd /opt/realtime-attendance
+sudo docker compose ps -a
+sudo docker compose logs --tail=200 app
+sudo docker compose logs --tail=200 worker
+sudo docker compose logs --tail=200 db
+sudo docker compose logs --since=30m -f app worker
+sudo journalctl -u caddy --since '30 minutes ago' --no-pager
+```
+
+Voorkom dat secrets of ruwe QR-/OAuth-waarden in supporttickets worden gekopieerd. Deel ook nooit de uitvoer van `docker compose config` of `docker inspect` ongecensureerd.
+
+### 7. Back-up en herstel
+
+Maak buiten de Docker-volume-opslag regelmatig versleutelde off-hostback-ups. Een consistente PostgreSQL custom-formatback-up:
+
+```bash
+cd /opt/realtime-attendance
+sudo install -d -m 0700 /var/backups/realtime-attendance
+sudo docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' | sudo tee "/var/backups/realtime-attendance/db-$(date +%Y%m%d-%H%M%S).dump" >/dev/null
+sudo find /var/backups/realtime-attendance -type f -name 'db-*.dump' -mtime +30 -delete
+```
+
+Test herstelprocedures periodiek op een aparte database/VPS. Herstel naar de productiedatabase veroorzaakt downtime en overschrijft data; stop eerst app en worker en maak nog een laatste back-up:
+
+```bash
+cd /opt/realtime-attendance
+sudo docker compose stop app worker
+sudo docker compose exec -T db sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < /veilig/pad/backup.dump
+sudo docker compose up -d app worker
+curl --fail --silent --show-error http://127.0.0.1:3005/api/health
+```
+
+Het named volume `realtime-attendance-postgres` bewaart PostgreSQL-data over containervervangingen heen. Voer nooit `docker compose down -v` uit op productie: `-v` verwijdert het databasevolume.
 
 ## Beheer en privacy
 

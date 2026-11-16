@@ -1,27 +1,88 @@
+name: realtime-attendance
+
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER ontbreekt}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD ontbreekt}@db:5432/${POSTGRES_DB:?POSTGRES_DB ontbreekt}?schema=public
+  APP_URL: ${APP_URL:?APP_URL ontbreekt}
+  SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET ontbreekt}
+  QR_SECRET: ${QR_SECRET:?QR_SECRET ontbreekt}
+  CONGRESSUS_API_BASE_URL: ${CONGRESSUS_API_BASE_URL:-https://api.congressus.nl/v30}
+  CONGRESSUS_API_KEY: ${CONGRESSUS_API_KEY:?CONGRESSUS_API_KEY ontbreekt}
+  CONGRESSUS_BASE_URL: ${CONGRESSUS_BASE_URL:-https://www.sv-realtime.nl}
+  CONGRESSUS_CLIENT_ID: ${CONGRESSUS_CLIENT_ID:?CONGRESSUS_CLIENT_ID ontbreekt}
+  CONGRESSUS_CLIENT_SECRET: ${CONGRESSUS_CLIENT_SECRET:?CONGRESSUS_CLIENT_SECRET ontbreekt}
+  CONGRESSUS_REDIRECT_URI: ${CONGRESSUS_REDIRECT_URI:?CONGRESSUS_REDIRECT_URI ontbreekt}
+  CONGRESSUS_BOARD_GROUP_SLUG: ${CONGRESSUS_BOARD_GROUP_SLUG:-}
+  CONGRESSUS_BOARD_USER_IDS: ${CONGRESSUS_BOARD_USER_IDS:-}
+  DEMO_MODE: "false"
+  DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-730}
+  CRON_SECRET: ${CRON_SECRET:-}
+
 services:
   db:
     image: postgres:17-alpine
-    environment: { POSTGRES_DB: realtime, POSTGRES_USER: realtime, POSTGRES_PASSWORD: realtime }
-    volumes: [postgres_data:/var/lib/postgresql/data]
-    healthcheck: { test: ["CMD-SHELL", "pg_isready -U realtime"], interval: 5s, timeout: 5s, retries: 10 }
-  migrate:
-    build: .
-    user: root
-    env_file: .env
-    command: ["npx","prisma","migrate","deploy"]
-    depends_on: { db: { condition: service_healthy } }
-  app:
-    build: .
-    env_file: .env
-    ports: ["3000:3000"]
-    depends_on: { migrate: { condition: service_completed_successfully } }
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB ontbreekt}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER ontbreekt}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD ontbreekt}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # Bewust geen `ports`: alleen bereikbaar op het interne Compose-netwerk.
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  app:
+    build:
+      context: .
+      target: runner
+    environment: *app-environment
+    ports:
+      - "127.0.0.1:3005:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+
   worker:
     build:
       context: .
-      target: builder
-    env_file: .env
-    command: ["npm","run","worker"]
-    depends_on: { migrate: { condition: service_completed_successfully } }
+      target: worker
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
-volumes: { postgres_data: {} }
+    init: true
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres_data:
+    name: realtime-attendance-postgres
