@@ -19,13 +19,13 @@ export async function checkIn(input: Input) {
   if (!participation && !input.allowException) throw new CheckInError("NOT_REGISTERED", "Dit lid is niet aangemeld voor deze activiteit.", 409);
   if (!participation && (!input.reason || input.reason.trim().length < 3)) throw new CheckInError("REASON_REQUIRED", "Een reden is verplicht voor deze uitzondering.");
   if (participation && !["approved", "participating", "subscribed"].includes(participation.status.toLowerCase())) throw new CheckInError("INVALID_PARTICIPATION", "Deze aanmelding is niet geldig voor inchecken.", 409);
-  const tickets = participation?.tickets as Array<{id:number;name?:string|null;email?:string|null}> | null;
+  const tickets = participation?.tickets as Array<{id?:number;name?:string|null;email?:string|null}> | null;
   let ticketId: number | undefined;
   if (event.participationMode === "ticketing" && tickets && tickets.length > 1) {
-    const own = tickets.filter(t => t.name?.toLocaleLowerCase("nl") === member.name.toLocaleLowerCase("nl"));
+    const own = tickets.filter((ticket): ticket is typeof ticket & { id: number } => Number.isInteger(ticket.id) && ticket.name?.toLocaleLowerCase("nl") === member.name.toLocaleLowerCase("nl"));
     if (own.length !== 1) throw new CheckInError("AMBIGUOUS_TICKET", "Meerdere tickets gevonden. Kies het juiste ticket handmatig.", 409);
     ticketId = own[0].id;
-  } else if (tickets?.length === 1) ticketId = tickets[0].id;
+  } else if (tickets?.length === 1 && Number.isInteger(tickets[0].id)) ticketId = tickets[0].id;
   try {
     return await db.$transaction(async tx => {
       const checkIn = await tx.checkIn.create({ data: { eventId: event.id, memberId: member.id, scannerId: scanner.id, method: input.method, participationId: participation?.congressusParticipationId, ticketId, exception: !participation, reason: input.reason?.trim(), syncStatus: participation ? "PENDING" : "NOT_APPLICABLE" } });

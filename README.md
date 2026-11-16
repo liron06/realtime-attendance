@@ -248,6 +248,16 @@ Belangrijkste codes:
 
 De logger schrijft bewust geen OAuth-code, access token, API-key, secret, username, naam of ruwe Congressus-response.
 
+Fouten van de handmatige activiteiten-synchronisatie hebben prefix `[congressus-sync]`. De melding in `/bestuur` toont een veilige foutcode en `requestId`; zoek die referentie zonder andere logregels of secrets te delen:
+
+```bash
+cd /opt/realtime-attendance
+sudo docker compose logs --since=30m app | grep '\[congressus-sync\]'
+sudo docker compose logs --since=30m app | grep '<REQUEST_ID_UIT_DE_MELDING>'
+```
+
+De JSON-regel bevat uitsluitend fase, foutcode, eventuele upstream-HTTP-status, Zod-issuepaden en -codes, duur en verwerkte aantallen. Belangrijke codes zijn `CONGRESSUS_UNAUTHORIZED` (ongeldige of verlopen key), `CONGRESSUS_FORBIDDEN` (onvoldoende event-/deelname- of categorierechten), `CONGRESSUS_RATE_LIMITED`, `CONGRESSUS_SERVER_ERROR`, `CONGRESSUS_TIMEOUT`, `CONGRESSUS_SCHEMA_ERROR`, `SYNC_DATABASE_ERROR` en `SYNC_PARTIAL`. Een gedeeltelijke synchronisatie behoudt eerder geslaagde activiteiten.
+
 ### 7. Back-up en herstel
 
 Maak buiten de Docker-volume-opslag regelmatig versleutelde off-hostback-ups. Een consistente PostgreSQL custom-formatback-up:
