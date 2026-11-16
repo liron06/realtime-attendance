@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  MEMBER
+  BOARD
+}
+enum ScanMethod {
+  CAMERA
+  USB
+  MANUAL
+}
+enum SyncStatus {
+  NOT_APPLICABLE
+  PENDING
+  PROCESSING
+  SYNCED
+  FAILED
+  CONFLICT
+}
+enum PresenceStatus {
+  UNKNOWN
+  PRESENT
+  NOT_PRESENT
+}
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  DEAD
+}
+
+model User {
+  id String @id @default(cuid())
+  congressusUserId String @unique
+  congressusMemberId Int? @unique
+  username String?
+  name String
+  firstName String?
+  pictureUrl String?
+  memberNumber String?
+  memberStatus String?
+  active Boolean @default(true)
+  role Role @default(MEMBER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  checkIns CheckIn[] @relation("CheckedMember")
+  performedCheckIns CheckIn[] @relation("Scanner")
+  auditLogs AuditLog[] @relation("AuditActor")
+}
+
+model EventCache {
+  id String @id @default(cuid())
+  congressusEventId Int @unique
+  name String
+  startsAt DateTime
+  endsAt DateTime
+  location String?
+  participationMode String @default("single")
+  registrationCount Int @default(0)
+  closedAt DateTime?
+  payload Json?
+  syncedAt DateTime @default(now())
+  participations EventParticipation[]
+  checkIns CheckIn[]
+}
+
+model EventParticipation {
+  id String @id @default(cuid())
+  congressusParticipationId Int @unique
+  eventId String
+  event EventCache @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  congressusMemberId Int?
+  memberName String
+  memberNumber String?
+  status String
+  presence PresenceStatus @default(UNKNOWN)
+  tickets Json?
+  syncedAt DateTime @default(now())
+  @@index([eventId, congressusMemberId])
+}
+
+model CheckIn {
+  id String @id @default(cuid())
+  eventId String
+  event EventCache @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  memberId String
+  member User @relation("CheckedMember", fields: [memberId], references: [id], onDelete: Restrict)
+  scannerId String
+  scanner User @relation("Scanner", fields: [scannerId], references: [id], onDelete: Restrict)
+  participationId Int?
+  ticketId Int?
+  method ScanMethod
+  exception Boolean @default(false)
+  reason String?
+  checkedInAt DateTime @default(now())
+  syncStatus SyncStatus @default(PENDING)
+  syncError String?
+  version Int @default(1)
+  @@unique([eventId, memberId])
+  @@index([syncStatus, checkedInAt])
+}
+
+model SyncOutbox {
+  id String @id @default(cuid())
+  checkInId String @unique
+  eventCongressusId Int
+  participationId Int?
+  ticketId Int?
+  payload Json
+  status OutboxStatus @default(PENDING)
+  attempts Int @default(0)
+  availableAt DateTime @default(now())
+  lockedAt DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  completedAt DateTime?
+  @@index([status, availableAt])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+  actorId String?
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action String
+  entityType String
+  entityId String
+  before Json?
+  after Json?
+  reason String?
+  ipHash String?
+  createdAt DateTime @default(now())
+  @@index([entityType, entityId, createdAt])
+}
+
+model SecurityEvent {
+  id String @id @default(cuid())
+  type String
+  userId String?
+  ipHash String?
+  details Json?
+  createdAt DateTime @default(now())
+  @@index([type, createdAt])
+}
+
+model RateLimitBucket {
+  key String @id
+  count Int
+  windowStart DateTime
+  expiresAt DateTime
+}

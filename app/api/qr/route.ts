@@ -1,0 +1,2 @@
+import { NextResponse } from "next/server"; import QRCode from "qrcode"; import { requireSession } from "@/lib/session"; import { createQrToken } from "@/lib/qr";
+export async function GET(){try{const session=await requireSession(); const token=await createQrToken(session.userId); const dataUrl=await QRCode.toDataURL(token,{errorCorrectionLevel:"M",margin:2,width:512,color:{dark:"#10241B",light:"#FFFFFF"}}); return NextResponse.json({dataUrl,expiresIn:60},{headers:{"Cache-Control":"no-store"}});}catch{return NextResponse.json({error:"Niet ingelogd"},{status:401});}}
