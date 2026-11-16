@@ -1,4 +1,5 @@
 import type { Role } from "@prisma/client";
+import type { ZodIssue } from "zod";
 import { memberPageSchema, oauthTokenSchema, userInfoSchema, type UserInfo } from "@/lib/congressus/types";
 
 export type OAuthFailureStep = "state_validation" | "authorization" | "configuration" | "token_exchange" | "userinfo" | "userinfo_schema" | "members_api" | "member_mapping" | "database_upsert" | "session_creation" | "callback";
@@ -10,11 +11,26 @@ export type OAuthFailureCode =
   | "OAUTH_MEMBER_USERNAME_MISSING" | "OAUTH_MEMBER_NOT_FOUND" | "OAUTH_MEMBER_AMBIGUOUS"
   | "OAUTH_DATABASE_UPSERT_FAILED" | "OAUTH_SESSION_CREATION_FAILED";
 
+export type SafeSchemaIssue = { path: string; code: string; expected?: string };
+
 export class OAuthCallbackError extends Error {
-  constructor(public code: OAuthFailureCode, public step: OAuthFailureStep, public httpStatus?: number) {
+  constructor(public code: OAuthFailureCode, public step: OAuthFailureStep, public httpStatus?: number, public schemaIssues: readonly SafeSchemaIssue[] = []) {
     super(code);
     this.name = "OAuthCallbackError";
   }
+}
+
+const safeExpectedTypes = new Set(["string", "number", "boolean", "object", "array", "record", "null", "undefined", "url", "email", "uuid", "date", "datetime"]);
+function safePath(path: PropertyKey[]) {
+  if (path.length === 0) return "<root>";
+  return path.map(part => typeof part === "number" ? String(part) : typeof part === "string" ? part.slice(0, 80).replace(/[^a-zA-Z0-9_-]/g, "_") : "unknown").join(".");
+}
+export function safeSchemaIssues(issues: readonly ZodIssue[]): SafeSchemaIssue[] {
+  return issues.slice(0, 20).map(issue => {
+    const candidate = issue.code === "invalid_type" ? issue.expected : issue.code === "invalid_format" ? issue.format : undefined;
+    const expected = candidate && safeExpectedTypes.has(candidate) ? candidate : undefined;
+    return { path: safePath(issue.path), code: issue.code, ...(expected ? { expected } : {}) };
+  });
 }
 
 export type OAuthConfig = {
@@ -67,7 +83,7 @@ export async function completeOAuthLogin(code: string, config: OAuthConfig, depe
   } catch { throw new OAuthCallbackError("OAUTH_USERINFO_REQUEST_FAILED", "userinfo"); }
   if (!userinfoResponse.ok) throw new OAuthCallbackError("OAUTH_USERINFO_HTTP_ERROR", "userinfo", userinfoResponse.status);
   const infoResult = userInfoSchema.safeParse(await parseJson(userinfoResponse, "OAUTH_USERINFO_SCHEMA_INVALID", "userinfo_schema"));
-  if (!infoResult.success) throw new OAuthCallbackError("OAUTH_USERINFO_SCHEMA_INVALID", "userinfo_schema", userinfoResponse.status);
+  if (!infoResult.success) throw new OAuthCallbackError("OAUTH_USERINFO_SCHEMA_INVALID", "userinfo_schema", userinfoResponse.status, safeSchemaIssues(infoResult.error.issues));
   const info = infoResult.data;
   if (!info.is_active) throw new OAuthCallbackError("OAUTH_MEMBER_INACTIVE", "userinfo");
   if (!info.username) throw new OAuthCallbackError("OAUTH_MEMBER_USERNAME_MISSING", "member_mapping");
@@ -103,5 +119,5 @@ export async function completeOAuthLogin(code: string, config: OAuthConfig, depe
 export function logOAuthCallbackFailure(error: OAuthCallbackError, requestId: string) {
   // Alleen vaste codes, stap, upstreamstatus en een willekeurig correlatie-ID.
   // Nooit error.message/cause of upstreambody loggen: die kunnen PII bevatten.
-  console.error("[oauth-callback]", JSON.stringify({ event: "oauth_callback_failed", requestId, code: error.code, step: error.step, ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}) }));
+  console.error("[oauth-callback]", JSON.stringify({ event: "oauth_callback_failed", requestId, code: error.code, step: error.step, ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}), ...(error.schemaIssues.length ? { schemaIssues: error.schemaIssues } : {}) }));
 }

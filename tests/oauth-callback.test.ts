@@ -37,6 +37,16 @@ describe("Congressus OAuth callback", () => {
   it("classificeert een netwerkfout bij userinfo", () => failure([token(), new Error("timeout")], "OAUTH_USERINFO_REQUEST_FAILED"));
   it("classificeert een userinfo HTTP-fout", () => failure([token(), new Response(null, { status: 401 })], "OAUTH_USERINFO_HTTP_ERROR"));
   it("classificeert een ongeldig userinfo-schema", () => failure([token(), Response.json({ user_id: "1", is_active: "yes" })], "OAUTH_USERINFO_SCHEMA_INVALID"));
+  it.each([
+    [{ is_active: "true" }, { path: "is_active", code: "invalid_type", expected: "boolean" }],
+    [{ picture: "geen-geldige-url" }, { path: "picture", code: "invalid_format", expected: "url" }],
+    [{ groups: { bestuur: { active: "ja" } } }, { path: "groups.bestuur.active", code: "invalid_type", expected: "boolean" }]
+  ])("projecteert alleen veilige Zod-metadata voor userinfo %j", async (overrides, expectedIssue) => {
+    const { dependencies } = setup([token(), userinfo(overrides)]);
+    const error = await completeOAuthLogin("code", config, dependencies).catch(caught => caught);
+    expect(error).toBeInstanceOf(OAuthCallbackError);
+    expect(error).toMatchObject({ code: "OAUTH_USERINFO_SCHEMA_INVALID", schemaIssues: [expectedIssue] });
+  });
   it("weigert een inactief lid expliciet", () => failure([token(), userinfo({ is_active: false })], "OAUTH_MEMBER_INACTIVE"));
   it("herkent een ontbrekende username", () => failure([token(), userinfo({ username: null })], "OAUTH_MEMBER_USERNAME_MISSING"));
   it("classificeert een netwerkfout van de leden-API", () => failure([token(), userinfo(), new Error("timeout")], "OAUTH_MEMBERS_API_REQUEST_FAILED"));
@@ -62,6 +72,12 @@ describe("Congressus OAuth callback", () => {
     expect(memberUrl.searchParams.get("page")).toBe("1");
     expect(memberUrl.searchParams.get("page_size")).toBe("2");
   });
+  it.each([undefined, null, ""])("accepteert een ontbrekende, null of lege profielafbeelding: %j", async picture => {
+    const value = picture === undefined ? { picture: undefined } : { picture };
+    const { dependencies, upsertUser } = setup([token(), userinfo(value), page()]);
+    await completeOAuthLogin("code", config, dependencies);
+    expect(upsertUser).toHaveBeenCalledWith(expect.objectContaining({ pictureUrl: undefined }));
+  });
   it("maakt alleen een actief lid van de geconfigureerde groep BOARD", async () => {
     const active = setup([token(), userinfo({ groups: { bestuur: { active: true } } }), page()]);
     await expect(completeOAuthLogin("code", config, active.dependencies)).resolves.toMatchObject({ role: "BOARD" });
@@ -74,11 +90,15 @@ describe("Congressus OAuth callback", () => {
   });
   it("logt uitsluitend veilige metadata", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    logOAuthCallbackFailure(new OAuthCallbackError("OAUTH_MEMBERS_API_HTTP_ERROR", "members_api", 403), "request-1");
+    logOAuthCallbackFailure(new OAuthCallbackError("OAUTH_USERINFO_SCHEMA_INVALID", "userinfo_schema", 200, [{ path: "picture", code: "invalid_format" }]), "request-1");
     const output = spy.mock.calls.flat().join(" ");
-    expect(output).toContain("OAUTH_MEMBERS_API_HTTP_ERROR");
-    expect(output).toContain('"httpStatus":403');
+    expect(output).toContain("OAUTH_USERINFO_SCHEMA_INVALID");
+    expect(output).toContain('"httpStatus":200');
+    expect(output).toContain('"path":"picture"');
+    expect(output).toContain('"code":"invalid_format"');
     expect(output).not.toContain("super-secret");
     expect(output).not.toContain("access-secret");
+    expect(output).not.toContain("geen-geldige-url");
+    expect(output).not.toContain("Testlid");
   });
 });

@@ -8,11 +8,13 @@ export const oauthTokenSchema = z.object({
 }).passthrough();
 
 export const userInfoSchema = z.object({
-  user_id: z.union([z.string(), z.number()]).transform(String),
+  user_id: z.union([z.string().min(1), z.number().int()]).transform(String),
   is_active: z.boolean(),
   username: z.string().nullish(),
-  name: z.string(),
-  picture: z.url().nullish(),
+  name: z.string().min(1),
+  // Congressus levert picture alleen wanneer een afbeelding is ingesteld.
+  // Legacy responses kunnen hiervoor ook een lege string teruggeven.
+  picture: z.union([z.literal(""), z.url()]).nullish().transform(value => value || undefined),
   member_status: z.string().nullish(),
   groups: z.record(z.string(), z.object({ active: z.boolean() }).passthrough()).nullish()
 }).passthrough();

@@ -228,6 +228,14 @@ sudo docker compose logs app | grep '\[oauth-callback\]'
 sudo docker compose logs --since=30m app | grep 'OAUTH_'
 ```
 
+Bij een userinfo-schemafout bevat de regel daarnaast uitsluitend gesaneerde Zod-metadata, nooit de ontvangen waarde:
+
+```json
+{"requestId":"...","code":"OAUTH_USERINFO_SCHEMA_INVALID","step":"userinfo_schema","httpStatus":200,"schemaIssues":[{"path":"picture","code":"invalid_format","expected":"url"}]}
+```
+
+Voor een typefout kan een veilig `expected` veld aanwezig zijn, bijvoorbeeld `{"path":"is_active","code":"invalid_type","expected":"boolean"}`.
+
 Belangrijkste codes:
 
 - `OAUTH_TOKEN_REQUEST_FAILED`, `OAUTH_TOKEN_HTTP_ERROR`, `OAUTH_TOKEN_SCHEMA_INVALID`: tokenexchange/netwerk, clientconfiguratie of onverwacht tokencontract.
