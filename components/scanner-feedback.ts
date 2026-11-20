@@ -13,10 +13,19 @@ type CheckInResponse = {
   message?: string;
   member?: { name?: string };
   syncStatus?: string;
+  exception?: boolean;
 };
 
 export function feedbackFromResponse(response: CheckInResponse, ok: boolean): ScanFeedback {
   if (ok) {
+    if (response.exception) {
+      return {
+        kind: "success",
+        title: "Aanwezig via uitzondering",
+        detail: response.member?.name?.trim(),
+        note: "Lokaal geregistreerd · niet naar Congressus gesynchroniseerd",
+      };
+    }
     return {
       kind: "success",
       title: "Ingecheckt!",

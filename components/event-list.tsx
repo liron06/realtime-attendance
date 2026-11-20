@@ -16,6 +16,7 @@ export type BoardEvent = {
   participationMode: string;
   registrations: number;
   checkIns: number;
+  checkedRegistrations: number;
 };
 
 export function EventList({ events, initialNow }: { events: BoardEvent[]; initialNow: string }) {
@@ -35,7 +36,7 @@ export function EventList({ events, initialNow }: { events: BoardEvent[]; initia
       const relevant = timing === "soon" || timing === "active";
       const state = timing === "closed" ? "Afgesloten" : timing === "active" ? "Nu bezig" : timing === "soon" ? "Begint binnenkort" : timing === "future" ? "Toekomstig" : "Afgelopen";
       const stateClass = timing === "active" ? "badge-success" : timing === "soon" ? "badge-warning" : timing === "future" ? "badge-brand" : "";
-      const percentage = event.registrations ? Math.round(event.checkIns / event.registrations * 100) : 0;
+      const percentage = event.registrations ? Math.round(event.checkedRegistrations / event.registrations * 100) : 0;
       return <article key={event.id} className={`card card-interactive group relative grid gap-5 p-5 sm:p-6 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center ${relevant ? "border-pink-200 bg-[linear-gradient(100deg,var(--brand-soft),white_42%)] shadow-[0_18px_48px_rgba(229,0,69,.11)]" : ""}`}>
         <a href={`/bestuur/activiteiten/${event.congressusEventId}`} className="absolute inset-0 rounded-[inherit]" aria-label={`${event.name} openen`}/>
         <div className="relative min-w-0 pointer-events-none">
@@ -44,7 +45,7 @@ export function EventList({ events, initialNow }: { events: BoardEvent[]; initia
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500"><span className="flex items-center gap-1.5"><CalendarDays size={16}/>{nlDate(event.startsAt)}</span>{event.location && <span className="flex items-center gap-1.5"><MapPin size={16}/>{event.location}</span>}</div>
         </div>
         <div className="relative pointer-events-none grid grid-cols-3 gap-2 rounded-2xl bg-white/80 p-3 text-center text-xs text-slate-500 sm:gap-6 sm:px-5 sm:text-sm">
-          <div><b className="block text-xl text-slate-900">{event.registrations}</b>Aangemeld</div>
+          <div><b className="block text-xl text-slate-900">{event.registrations}</b>Actief aangemeld</div>
           <div><b className="block text-xl text-emerald-700">{event.checkIns}</b>Ingecheckt</div>
           <div><b className="block text-xl text-slate-900">{percentage}%</b>Aanwezig</div>
         </div>

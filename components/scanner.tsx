@@ -18,7 +18,8 @@ function hasSoundPreference() {
 }
 
 type Member = { id: string; name: string; memberNumber: string | null };
-type CheckInBody = { code?: string; message?: string; member?: { name?: string }; syncStatus?: string };
+type CheckInBody = { code?: string; message?: string; member?: { name?: string }; syncStatus?: string; exception?: boolean };
+type PendingException = { body: Record<string, unknown>; message: string };
 
 function FeedbackOverlay({ feedback }: { feedback: ScanFeedback | null }) {
   if (!feedback) return null;
@@ -60,6 +61,9 @@ export function Scanner({ eventId, eventName, backHref, members }: { eventId: nu
   const [query, setQuery] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [audioUnavailable, setAudioUnavailable] = useState(false);
+  const [pendingException, setPendingException] = useState<PendingException | null>(null);
+  const [exceptionReason, setExceptionReason] = useState("");
+  const [exceptionReasonError, setExceptionReasonError] = useState("");
 
   audio.current ??= createScannerAudio();
 
@@ -81,8 +85,8 @@ export function Scanner({ eventId, eventName, backHref, members }: { eventId: nu
     }, SCAN_FEEDBACK_DURATION_MS);
   }
 
-  async function send(body: Record<string, unknown>) {
-    if (locked.current) return false;
+  async function send(body: Record<string, unknown>, continueLocked = false) {
+    if (locked.current && !continueLocked) return false;
     locked.current = true;
     setFeedback({ kind: "processing", title: "Scan controleren…" });
     try {
@@ -94,12 +98,39 @@ export function Scanner({ eventId, eventName, backHref, members }: { eventId: nu
         body: JSON.stringify({ eventId, ...body }),
       });
       const json = await response.json().catch(() => ({})) as CheckInBody;
+      if (!response.ok && json.code === "NOT_REGISTERED" && body.allowException !== true) {
+        setFeedback(null);
+        setPendingException({ body, message: json.message ?? "Dit lid is niet aangemeld voor deze activiteit." });
+        setExceptionReason("");
+        setExceptionReasonError("");
+        return false;
+      }
       finish(feedbackFromResponse(json, response.ok));
       return response.ok;
     } catch {
       finish({ kind: "error", title: "Verbindingsfout", detail: "Controleer de verbinding en probeer opnieuw." });
       return false;
     }
+  }
+
+  function cancelException() {
+    setPendingException(null);
+    setExceptionReason("");
+    setExceptionReasonError("");
+    locked.current = false;
+  }
+
+  async function confirmException() {
+    if (!pendingException) return;
+    const reason = exceptionReason.trim();
+    if (reason.length < 3) {
+      setExceptionReasonError("Vul een korte reden van minimaal 3 tekens in.");
+      return;
+    }
+    const body = pendingException.body;
+    setPendingException(null);
+    setExceptionReasonError("");
+    await send({ ...body, allowException: true, reason }, true);
   }
 
   async function submit(qrToken: string) {
@@ -175,6 +206,20 @@ export function Scanner({ eventId, eventName, backHref, members }: { eventId: nu
         <div className="mt-3 space-y-2">{members.filter(member => `${member.name} ${member.memberNumber ?? ""}`.toLowerCase().includes(query.toLowerCase())).slice(0, 30).map(member => <button type="button" key={member.id} className="flex min-h-16 w-full items-center justify-between rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-pink-300 hover:bg-[var(--brand-soft)]" onClick={() => void send({ method: "MANUAL", memberId: member.id })}><span className="min-w-0"><b className="block truncate">{member.name}</b><small className="text-slate-500">{member.memberNumber || "Geen lidnummer"}</small></span><span className="badge badge-brand ml-3">Inchecken</span></button>)}</div>
       </div>}
       <FeedbackOverlay feedback={feedback}/>
+      {pendingException && <div className="absolute inset-0 z-50 grid place-items-center bg-slate-950/75 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="exception-title" aria-describedby="exception-description">
+        <div className="w-full max-w-md rounded-[1.5rem] bg-white p-5 text-slate-900 shadow-2xl sm:p-6">
+          <span className="grid size-12 place-items-center rounded-full bg-amber-100 text-amber-700"><TriangleAlert size={26}/></span>
+          <h2 id="exception-title" className="mt-4 text-2xl font-black">Dit lid is niet aangemeld</h2>
+          <p id="exception-description" className="mt-2 text-sm leading-6 text-slate-600">{pendingException.message} Je kunt de aanwezigheid alleen na expliciete bevestiging als uitzondering registreren.</p>
+          <label htmlFor="exception-reason" className="mt-5 block font-bold">Reden voor uitzondering</label>
+          <textarea id="exception-reason" autoFocus required rows={3} maxLength={500} className="input mt-2 resize-none" value={exceptionReason} onChange={event => { setExceptionReason(event.target.value); setExceptionReasonError(""); }} aria-invalid={Boolean(exceptionReasonError)} aria-describedby={exceptionReasonError ? "exception-reason-error" : undefined} placeholder="Bijvoorbeeld: mondeling met de organisatie afgestemd"/>
+          {exceptionReasonError && <p id="exception-reason-error" className="mt-2 text-sm font-bold text-red-700" role="alert">{exceptionReasonError}</p>}
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <button type="button" className="button button-secondary" onClick={cancelException}>Annuleren</button>
+            <button type="button" className="button" onClick={() => void confirmException()}>Toch inchecken</button>
+          </div>
+        </div>
+      </div>}
     </div>
   </section>;
 }

@@ -1,10 +1,16 @@
 import { db } from "@/lib/db";
 import { SyncButton } from "@/components/sync-button";
 import { EventList } from "@/components/event-list";
+import { activeParticipations, matchParticipationCheckIns } from "@/lib/participations";
 
 export default async function Board() {
-  const events = await db.eventCache.findMany({ include: { _count: { select: { checkIns: true, participations: true } } } });
-  const eventItems = events.map(event => ({
+  const events = await db.eventCache.findMany({ include: {
+    participations: { select: { congressusParticipationId: true, congressusMemberId: true, status: true } },
+    checkIns: { select: { id: true, participationId: true, member: { select: { congressusMemberId: true } } } },
+  } });
+  const eventItems = events.map(event => {
+    const registrations = activeParticipations(event.participationMode, event.participations);
+    return ({
     id: event.id,
     congressusEventId: event.congressusEventId,
     name: event.name,
@@ -13,9 +19,11 @@ export default async function Board() {
     closedAt: event.closedAt?.toISOString() ?? null,
     location: event.location,
     participationMode: event.participationMode,
-    registrations: event._count.participations,
-    checkIns: event._count.checkIns,
-  }));
+    registrations: registrations.length,
+    checkIns: event.checkIns.length,
+    checkedRegistrations: matchParticipationCheckIns(registrations, event.checkIns).size,
+  });
+  });
 
   return <main className="page-shell py-7 sm:py-10">
     <div className="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-end">

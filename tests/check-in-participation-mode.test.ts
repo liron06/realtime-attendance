@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   eventFindUnique: vi.fn(),
-  participationFindFirst: vi.fn(),
+  participationFindMany: vi.fn(),
+  checkInFindUnique: vi.fn(),
   transaction: vi.fn(),
   verifyQrToken: vi.fn()
 }));
@@ -13,7 +14,8 @@ vi.mock("@/lib/db", () => ({
   db: {
     user: { findUnique: mocks.userFindUnique },
     eventCache: { findUnique: mocks.eventFindUnique },
-    eventParticipation: { findFirst: mocks.participationFindFirst },
+    eventParticipation: { findMany: mocks.participationFindMany },
+    checkIn: { findUnique: mocks.checkInFindUnique },
     $transaction: mocks.transaction
   }
 }));
@@ -36,7 +38,8 @@ describe("check-in bij onbekende deelnamevorm", () => {
       status: 409,
       message: expect.stringContaining("deelnamevorm")
     });
-    expect(mocks.participationFindFirst).not.toHaveBeenCalled();
+    expect(mocks.participationFindMany).not.toHaveBeenCalled();
+    expect(mocks.checkInFindUnique).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

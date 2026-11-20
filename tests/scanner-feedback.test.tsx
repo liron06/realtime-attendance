@@ -82,6 +82,49 @@ describe("scannerfeedback", () => {
     await scanCamera();
     expect(await screen.findByText("Scan geweigerd")).toBeTruthy();
     expect(screen.getByText("Deze QR-code is ongeldig of verlopen.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Toch inchecken" })).toBeNull();
+  });
+
+  it("vraagt expliciet om een reden en registreert daarna dezelfde QR als uitzondering", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(response({ code: "NOT_REGISTERED", message: "Dit lid is niet aangemeld voor deze activiteit." }, false))
+      .mockResolvedValueOnce(response({ member: { name: "Mila de Vries" }, syncStatus: "NOT_APPLICABLE", exception: true }, true));
+    renderScanner();
+    await flush();
+    await scanCamera("verified-qr-token");
+    expect(await screen.findByRole("heading", { name: "Dit lid is niet aangemeld" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Toch inchecken" }));
+    expect(screen.getByText(/minimaal 3 tekens/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Reden voor uitzondering"), { target: { value: "Afgestemd met organisatie" } });
+    fireEvent.click(screen.getByRole("button", { name: "Toch inchecken" }));
+
+    expect(await screen.findByText("Aanwezig via uitzondering")).toBeTruthy();
+    expect(screen.getByText(/niet naar Congressus gesynchroniseerd/)).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const retry = vi.mocked(fetch).mock.calls[1][1] as RequestInit;
+    expect(JSON.parse(String(retry.body))).toMatchObject({
+      eventId: 42,
+      method: "CAMERA",
+      qrToken: "verified-qr-token",
+      allowException: true,
+      reason: "Afgestemd met organisatie",
+    });
+  });
+
+  it("houdt nieuwe scans tegen zolang de uitzondering niet is bevestigd of geannuleerd", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(response({ code: "NOT_REGISTERED", message: "Dit lid is niet aangemeld." }, false))
+      .mockResolvedValueOnce(response({ member: { name: "Noah" }, syncStatus: "PENDING" }, true));
+    renderScanner();
+    await flush();
+    await scanCamera("token-mila");
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    await scanCamera("token-noah");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Annuleren" }));
+    await scanCamera("token-noah");
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("blokkeert gelijktijdige scans en accepteert daarna een ander lid", async () => {
