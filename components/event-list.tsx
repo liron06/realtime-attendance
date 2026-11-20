@@ -14,13 +14,11 @@ export type BoardEvent = {
   closedAt: string | null;
   location: string | null;
   participationMode: string;
-  unit: "members" | "tickets" | "registrations";
+  unit: "members" | "tickets";
   registered: number;
   checkedIn: number;
   notCheckedIn: number;
   exceptionCheckIns: number;
-  participationRecords: number;
-  identifiableTickets: number;
 };
 
 export function EventList({ events, initialNow }: { events: BoardEvent[]; initialNow: string }) {
@@ -41,7 +39,6 @@ export function EventList({ events, initialNow }: { events: BoardEvent[]; initia
       const state = timing === "closed" ? "Afgesloten" : timing === "active" ? "Nu bezig" : timing === "soon" ? "Begint binnenkort" : timing === "future" ? "Toekomstig" : "Afgelopen";
       const stateClass = timing === "active" ? "badge-success" : timing === "soon" ? "badge-warning" : timing === "future" ? "badge-brand" : "";
       const members = event.unit === "members";
-      const tickets = event.unit === "tickets";
       return <article key={event.id} className={`card card-interactive group relative grid gap-5 p-5 sm:p-6 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center ${relevant ? "border-pink-200 bg-[linear-gradient(100deg,var(--brand-soft),white_42%)] shadow-[0_18px_48px_rgba(229,0,69,.11)]" : ""}`}>
         <a href={`/bestuur/activiteiten/${event.congressusEventId}`} className="absolute inset-0 rounded-[inherit]" aria-label={`${event.name} openen`}/>
         <div className="relative min-w-0 pointer-events-none">
@@ -50,8 +47,8 @@ export function EventList({ events, initialNow }: { events: BoardEvent[]; initia
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500"><span className="flex items-center gap-1.5"><CalendarDays size={16}/>{nlDate(event.startsAt)}</span>{event.location && <span className="flex items-center gap-1.5"><MapPin size={16}/>{event.location}</span>}</div>
         </div>
         <div className="relative pointer-events-none grid grid-cols-3 gap-2 rounded-2xl bg-white/80 p-3 text-center text-xs text-slate-500 sm:gap-6 sm:px-5 sm:text-sm">
-          <div><b className="block text-xl text-slate-900">{event.registered}</b>{members ? "Aangemelde leden" : tickets ? "Geldige tickets" : "Registraties"}{event.participationMode === "ticketing" && !tickets && <small className="block text-[10px]">{event.participationRecords} deelnamerecords</small>}</div>
-          <div><b className="block text-xl text-emerald-700">{event.checkedIn}</b>{members ? "Ingecheckte leden" : tickets ? "Ingecheckte tickets" : "Check-ins"}{!tickets && event.exceptionCheckIns > 0 && <small className="block text-[10px]">{event.exceptionCheckIns} uitzondering</small>}</div>
+          <div><b className="block text-xl text-slate-900">{event.registered}</b>{members ? "Aangemelde leden" : "Geldige tickets"}</div>
+          <div><b className="block text-xl text-emerald-700">{event.checkedIn}</b>{members ? "Ingecheckte leden" : "Ingecheckte tickets"}{members && event.exceptionCheckIns > 0 && <small className="block text-[10px]">{event.exceptionCheckIns} uitzondering</small>}</div>
           <div><b className="block text-xl text-slate-900">{event.notCheckedIn}</b>Nog niet</div>
         </div>
         <div className="relative flex items-center justify-end gap-2">
