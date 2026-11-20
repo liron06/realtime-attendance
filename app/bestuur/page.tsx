@@ -6,7 +6,7 @@ import { attendanceOverview } from "@/lib/attendance-stats";
 export default async function Board() {
   const events = await db.eventCache.findMany({ include: {
     participations: { select: { congressusParticipationId: true, congressusMemberId: true, memberName: true, memberNumber: true, status: true, tickets: true } },
-    checkIns: { select: { id: true, exception: true, ticketId: true, member: { select: { congressusMemberId: true } } } },
+    checkIns: { select: { id: true, exception: true, participationId: true, ticketId: true, member: { select: { congressusMemberId: true } } } },
   } });
   const eventItems = events.map(event => {
     const overview = attendanceOverview(event.participationMode, event.participations, event.checkIns);
@@ -24,6 +24,8 @@ export default async function Board() {
       checkedIn: overview.checkedIn,
       notCheckedIn: overview.notCheckedIn,
       exceptionCheckIns: overview.exceptionCheckIns,
+      participationRecords: overview.participationRecords,
+      identifiableTickets: overview.identifiableTickets,
     };
   });
 
