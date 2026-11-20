@@ -1,6 +1,7 @@
 import { Prisma, ScanMethod } from "@prisma/client";
 import { db } from "@/lib/db";
 import { verifyQrToken } from "@/lib/qr";
+import { isValidParticipationStatus } from "@/lib/attendance-stats";
 
 export class CheckInError extends Error { constructor(public code: string, message: string, public status=400) { super(message); } }
 type Input = { eventCongressusId: number; scannerId: string; method: ScanMethod; qrToken?: string; memberId?: string; reason?: string; allowException?: boolean };
@@ -19,7 +20,7 @@ export async function checkIn(input: Input) {
   const participation = member.congressusMemberId ? await db.eventParticipation.findFirst({ where: { eventId: event.id, congressusMemberId: member.congressusMemberId } }) : null;
   if (!participation && !input.allowException) throw new CheckInError("NOT_REGISTERED", "Dit lid is niet aangemeld voor deze activiteit.", 409);
   if (!participation && (!input.reason || input.reason.trim().length < 3)) throw new CheckInError("REASON_REQUIRED", "Een reden is verplicht voor deze uitzondering.");
-  if (participation && !["approved", "participating", "subscribed"].includes(participation.status.toLowerCase())) throw new CheckInError("INVALID_PARTICIPATION", "Deze aanmelding is niet geldig voor inchecken.", 409);
+  if (participation && !isValidParticipationStatus(participation.status)) throw new CheckInError("INVALID_PARTICIPATION", "Deze aanmelding is niet geldig voor inchecken.", 409);
   const tickets = participation?.tickets as Array<{id?:number;name?:string|null;email?:string|null}> | null;
   let ticketId: number | undefined;
   if (event.participationMode === "ticketing" && tickets && tickets.length > 1) {
