@@ -5,6 +5,7 @@ export type ScanFeedback = {
   kind: FeedbackKind;
   title: string;
   detail?: string;
+  note?: string;
 };
 
 type CheckInResponse = {
@@ -16,18 +17,18 @@ type CheckInResponse = {
 
 export function feedbackFromResponse(response: CheckInResponse, ok: boolean): ScanFeedback {
   if (ok) {
-    const firstName = response.member?.name?.trim().split(/\s+/)[0];
     return {
       kind: "success",
-      title: firstName ? `${firstName} ingecheckt!` : "Ingecheckt!",
-      detail: response.syncStatus === "PENDING"
+      title: "Ingecheckt!",
+      detail: response.member?.name?.trim(),
+      note: response.syncStatus === "PENDING"
         ? "Lokaal geregistreerd · synchronisatie met Congressus staat klaar"
         : "Aanwezigheid geregistreerd",
     };
   }
 
   if (response.code === "ALREADY_CHECKED_IN") {
-    return { kind: "duplicate", title: response.message ?? "Dit lid is al ingecheckt" };
+    return { kind: "duplicate", title: "Al ingecheckt", detail: response.message ?? "Dit lid is al ingecheckt" };
   }
 
   return {
@@ -42,7 +43,7 @@ type BrowserWindow = Window & typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
 };
 
-export function createScannerAudio() {
+export function createScannerAudio(volume = 0.16) {
   let context: AudioContext | null = null;
   let enabled = false;
 
@@ -84,7 +85,7 @@ export function createScannerAudio() {
           oscillator.type = "sine";
           oscillator.frequency.setValueAtTime(frequency, start + offset);
           gain.gain.setValueAtTime(0.0001, start + offset);
-          gain.gain.exponentialRampToValueAtTime(0.12, start + offset + 0.01);
+          gain.gain.exponentialRampToValueAtTime(Math.min(Math.max(volume, 0.01), 0.3), start + offset + 0.01);
           gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + duration);
           oscillator.connect(gain).connect(context.destination);
           oscillator.start(start + offset);
@@ -93,6 +94,15 @@ export function createScannerAudio() {
       } catch {
         // Audiofeedback is aanvullend en mag het scanproces nooit onderbreken.
       }
+    },
+    async close() {
+      enabled = false;
+      try {
+        await context?.close();
+      } catch {
+        // Een al gesloten audiocontext hoeft navigatie niet te blokkeren.
+      }
+      context = null;
     },
   };
 }

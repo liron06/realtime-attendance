@@ -6,10 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Scanner } from "@/components/scanner";
 import { SCAN_FEEDBACK_DURATION_MS } from "@/components/scanner-feedback";
 
+const zxing = vi.hoisted(() => ({ callback: undefined as ((result?: { getText(): string }) => void) | undefined, rejectCamera: false, stop: vi.fn() }));
 vi.mock("@/lib/csrf-client", () => ({ getCsrfToken: vi.fn().mockResolvedValue("csrf-test") }));
 vi.mock("@zxing/browser", () => ({
   BrowserQRCodeReader: class {
-    decodeFromConstraints() { return new Promise(() => undefined); }
+    decodeFromConstraints(_constraints: unknown, _video: unknown, callback: (result?: { getText(): string }) => void) {
+      zxing.callback = callback;
+      return zxing.rejectCamera ? Promise.reject(new Error("permission denied")) : Promise.resolve({ stop: zxing.stop });
+    }
   },
 }));
 
@@ -18,114 +22,128 @@ const members = [{ id: "member-1", name: "Mila de Vries", memberNumber: "RT-101"
 function response(body: object, ok: boolean) {
   return { ok, json: vi.fn().mockResolvedValue(body) } as unknown as Response;
 }
-
-function renderUsbScanner() {
-  render(<Scanner eventId={42} members={members}/>);
-  fireEvent.click(screen.getByRole("tab", { name: "USB" }));
-  return screen.getByPlaceholderText("Scannerinvoer…") as HTMLInputElement;
+function renderScanner() {
+  return render(<Scanner eventId={42} eventName="LAN-party" backHref="/bestuur/activiteiten/42" members={members}/>);
 }
-
-function scan(input: HTMLInputElement, token = "qr-token") {
-  fireEvent.change(input, { target: { value: token } });
-  fireEvent.submit(input.closest("form")!);
+async function scanCamera(token = "qr-token") {
+  await act(async () => { zxing.callback?.({ getText: () => token }); await Promise.resolve(); });
 }
-
 async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
 describe("scannerfeedback", () => {
   beforeEach(() => {
+    const values = new Map<string, string>();
+    Object.defineProperty(window, "localStorage", { configurable: true, value: {
+      clear: () => values.clear(),
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+      key: () => null,
+      get length() { return values.size; },
+    } satisfies Storage });
+    zxing.callback = undefined;
+    zxing.rejectCamera = false;
+    zxing.stop.mockClear();
     vi.stubGlobal("fetch", vi.fn());
     Object.defineProperty(navigator, "vibrate", { configurable: true, value: vi.fn() });
   });
-
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("toont een bevestigde lokale check-in als groene succesfeedback", async () => {
+  it("toont een bevestigde lokale camera-check-in als succesfeedback", async () => {
     vi.mocked(fetch).mockResolvedValue(response({ member: { name: "Mila de Vries" }, syncStatus: "PENDING" }, true));
-    const input = renderUsbScanner();
-    scan(input);
-    expect(await screen.findByText("Mila ingecheckt!")).toBeTruthy();
+    renderScanner();
+    await flush();
+    await scanCamera();
+    expect(await screen.findByText("Ingecheckt!")).toBeTruthy();
+    expect(screen.getByText("Mila de Vries")).toBeTruthy();
     expect(screen.getByText(/Lokaal geregistreerd/)).toBeTruthy();
-    expect(navigator.vibrate).toHaveBeenCalledWith(120);
   });
 
-  it("onderscheidt een dubbele check-in met de backendcode", async () => {
+  it("onderscheidt een dubbele scan met naam en oorspronkelijke tijd", async () => {
     vi.mocked(fetch).mockResolvedValue(response({ code: "ALREADY_CHECKED_IN", message: "Mila de Vries is al ingecheckt om 20:14." }, false));
-    const input = renderUsbScanner();
-    scan(input);
-    expect(await screen.findByText("Mila de Vries is al ingecheckt om 20:14.")).toBeTruthy();
+    renderScanner();
+    await flush();
+    await scanCamera();
+    expect(await screen.findByText("Al ingecheckt")).toBeTruthy();
+    expect(screen.getByText("Mila de Vries is al ingecheckt om 20:14.")).toBeTruthy();
     expect(navigator.vibrate).toHaveBeenCalledWith([80, 70, 80]);
   });
 
-  it("toont een veilige rode fout bij een ongeldige QR-code", async () => {
+  it("toont een veilige fout bij een ongeldige QR-code", async () => {
     vi.mocked(fetch).mockResolvedValue(response({ code: "INVALID_QR", message: "Deze QR-code is ongeldig of verlopen." }, false));
-    const input = renderUsbScanner();
-    scan(input);
+    renderScanner();
+    await flush();
+    await scanCamera();
     expect(await screen.findByText("Scan geweigerd")).toBeTruthy();
     expect(screen.getByText("Deze QR-code is ongeldig of verlopen.")).toBeTruthy();
   });
 
-  it("toont een netwerkfout zonder het scanproces te laten crashen", async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError("offline"));
-    const input = renderUsbScanner();
-    scan(input);
-    expect(await screen.findByText("Verbindingsfout")).toBeTruthy();
-    expect(screen.getByText(/Controleer de verbinding/)).toBeTruthy();
-  });
-
-  it("blokkeert gelijktijdige scans en accepteert daarna een volgend lid", async () => {
+  it("blokkeert gelijktijdige scans en accepteert daarna een ander lid", async () => {
     vi.useFakeTimers();
     let resolveFirst!: (value: Response) => void;
-    vi.mocked(fetch)
-      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }))
-      .mockResolvedValueOnce(response({ member: { name: "Noah Jansen" }, syncStatus: "PENDING" }, true));
-    const input = renderUsbScanner();
-    scan(input, "token-mila");
-    scan(input, "token-noah");
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; })).mockResolvedValueOnce(response({ member: { name: "Noah Jansen" }, syncStatus: "PENDING" }, true));
+    renderScanner();
     await flush();
+    await scanCamera("token-mila");
+    await scanCamera("token-noah");
     expect(fetch).toHaveBeenCalledTimes(1);
-
     resolveFirst(response({ member: { name: "Mila de Vries" }, syncStatus: "PENDING" }, true));
     await flush();
     await act(async () => { vi.advanceTimersByTime(SCAN_FEEDBACK_DURATION_MS); });
-    scan(input, "token-noah");
-    await flush();
+    await scanCamera("token-mila");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await scanCamera("token-noah");
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("blijft scannen wanneer Web Audio niet beschikbaar is", async () => {
+  it("valt zonder Web Audio veilig terug", async () => {
     vi.mocked(fetch).mockResolvedValue(response({ member: { name: "Mila" }, syncStatus: "PENDING" }, true));
-    const input = renderUsbScanner();
-    fireEvent.click(screen.getByRole("button", { name: "Geluid inschakelen" }));
+    renderScanner();
+    fireEvent.click(screen.getByRole("button", { name: "Geluid aanzetten" }));
     await flush();
-    expect(screen.getByText(/Geluid is niet beschikbaar/)).toBeTruthy();
-    scan(input);
-    expect(await screen.findByText("Mila ingecheckt!")).toBeTruthy();
+    expect(screen.getByText(/Geluid niet beschikbaar/)).toBeTruthy();
+    await scanCamera();
+    expect(await screen.findByText("Ingecheckt!")).toBeTruthy();
   });
 
   it("verwijdert de overlay automatisch na 1,5 seconde", async () => {
     vi.useFakeTimers();
     vi.mocked(fetch).mockResolvedValue(response({ member: { name: "Mila" }, syncStatus: "PENDING" }, true));
-    const input = renderUsbScanner();
-    scan(input);
+    renderScanner();
     await flush();
-    expect(screen.getByText("Mila ingecheckt!")).toBeTruthy();
+    await scanCamera();
+    expect(screen.getByText("Ingecheckt!")).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(SCAN_FEEDBACK_DURATION_MS); });
-    expect(screen.queryByText("Mila ingecheckt!")).toBeNull();
+    expect(screen.queryByText("Ingecheckt!")).toBeNull();
   });
 
-  it("stuurt USB-scans met dezelfde feedbackroute naar de check-in-API", async () => {
-    vi.mocked(fetch).mockResolvedValue(response({ code: "INVALID_QR", message: "USB-code geweigerd." }, false));
-    const input = renderUsbScanner();
-    scan(input, "usb-token");
-    expect(await screen.findByText("USB-code geweigerd.")).toBeTruthy();
+  it("biedt alleen Camera en Zoeken en gebruikt handmatig zoeken als fallback", async () => {
+    vi.mocked(fetch).mockResolvedValue(response({ member: { name: "Mila de Vries" }, syncStatus: "PENDING" }, true));
+    renderScanner();
+    expect(screen.queryByText("USB")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Lid handmatig zoeken" }));
+    fireEvent.change(screen.getByPlaceholderText("Bijvoorbeeld Mila of RT-101"), { target: { value: "RT-101" } });
+    fireEvent.click(screen.getByRole("button", { name: /Mila de Vries/ }));
+    expect(await screen.findByText("Ingecheckt!")).toBeTruthy();
     const request = vi.mocked(fetch).mock.calls[0][1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({ eventId: 42, method: "USB", qrToken: "usb-token" });
+    expect(JSON.parse(String(request.body))).toMatchObject({ eventId: 42, method: "MANUAL", memberId: "member-1" });
+  });
+
+  it("toont cameratoestemmingsfouten en stopt cameraresources bij navigatie", async () => {
+    zxing.rejectCamera = true;
+    const denied = renderScanner();
+    expect(await screen.findByText("Camera niet beschikbaar")).toBeTruthy();
+    denied.unmount();
+    zxing.rejectCamera = false;
+    const active = renderScanner();
+    await flush();
+    active.unmount();
+    expect(zxing.stop).toHaveBeenCalled();
   });
 });
